@@ -1,21 +1,9 @@
-import Groq from "groq-sdk";
-import { AssemblyAI } from 'assemblyai';
 import multilingualAIService from './multilingualAI.js';
 
-// Initialize Groq client
-// ideally this should be in an edge function to hide the key, but for a hackathon/demo, client-side is often used (at risk of exposing key)
-// OR we ask user to put VITE_GROQ_API_KEY in .env
-const groq = new Groq({
-    apiKey: import.meta.env.VITE_GROQ_API_KEY,
-    dangerouslyAllowBrowser: true // Required for client-side usage in hackathons
-});
-
-const aai = new AssemblyAI({
-    apiKey: import.meta.env.VITE_ASSEMBLYAI_API_KEY
-});
+// All AI calls are forwarded to the multilingual service which uses Supabase Edge Functions.
+// Direct Groq/AssemblyAI SDK usage has been moved server-side.
 
 export const aiService = {
-    // Legacy methods for backward compatibility (now using multilingual service)
     generateSummary: async (text, targetLanguage = null) => {
         return await multilingualAIService.generateSummary(text, targetLanguage);
     },
@@ -32,7 +20,6 @@ export const aiService = {
         return await multilingualAIService.transcribeAudio(audioUrl, targetLanguage);
     },
 
-    // New multilingual methods
     generateFlashcards: async (text, targetLanguage = null) => {
         return await multilingualAIService.generateFlashcards(text, targetLanguage);
     },
@@ -45,9 +32,10 @@ export const aiService = {
         return multilingualAIService.getSupportedLanguages();
     },
 
-    // AssemblyAI real-time transcriber (for backward compatibility)
+    // Stub kept for backward compatibility; live streaming handled directly in liveTranscription.js
     createRealtimeTranscriber: () => {
-        return aai.realtime.transcriber({ sampleRate: 16000 });
+        console.warn('createRealtimeTranscriber is deprecated; use startLiveTranscription directly.');
+        return null;
     },
 };
 

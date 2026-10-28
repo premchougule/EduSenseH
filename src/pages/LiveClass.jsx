@@ -801,7 +801,15 @@ function LiveClass() {
 
       if (cancelled) return;
 
-      let apiKey = import.meta.env.VITE_ASSEMBLYAI_API_KEY;
+      let apiKey;
+      try {
+        const { getAssemblyToken } = await import('../lib/assemblyToken.js');
+        apiKey = await getAssemblyToken();
+      } catch (err) {
+        console.error('[Teacher] Failed to fetch AssemblyAI token:', err);
+        setTranscriptionStatus('Error');
+        return;
+      }
 
       if (!apiKey) {
         setTranscriptionStatus("Error");

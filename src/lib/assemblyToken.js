@@ -3,7 +3,7 @@
 
 export async function getAssemblyToken() {
     const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-    const resp = await fetch(`${supabaseUrl}/functions/v1/assemblyai/token`);
+    const resp = await fetch(`${supabaseUrl}/functions/v1/assemblyai-token`);
     if (!resp.ok) {
         console.error('Failed to fetch AssemblyAI token', resp.status);
         throw new Error('Unable to obtain AssemblyAI token');

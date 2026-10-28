@@ -61,7 +61,7 @@ export async function startMultilingualLiveTranscription(apiKey, options = {}) {
   console.log('[Multilingual Transcription] Starting with language:', language);
 
   if (!apiKey || apiKey === 'your_assemblyai_api_key_here') {
-    const msg = 'AssemblyAI API key not set. Add VITE_ASSEMBLYAI_API_KEY to .env';
+    const msg = 'AssemblyAI token unavailable. Ensure the assemblyai/token Edge Function is deployed.';
     console.error('[Multilingual Transcription]', msg);
     onStatus?.('Error');
     throw new Error(msg);
@@ -170,7 +170,7 @@ export async function startMultilingualLiveTranscription(apiKey, options = {}) {
 
     audioContext = new (window.AudioContext || window.webkitAudioContext)();
     console.log('[Multilingual Transcription] AudioContext created, sampleRate:', audioContext.sampleRate);
-    
+
     if (audioContext.state === 'suspended') {
       await audioContext.resume();
       console.log('[Multilingual Transcription] AudioContext resumed');
