@@ -22,7 +22,7 @@ const ArchiveClass = () => {
     const [attendanceSession, setAttendanceSession] = useState(null);
 
     // -- AI Quiz States --
-    const [quizDataMap, setQuizDataMap] = useState({}); 
+    const [quizDataMap, setQuizDataMap] = useState({});
     const [quizAttemptMap, setQuizAttemptMap] = useState({});
     const [showQuizModal, setShowQuizModal] = useState(false);
     const [activeQuizSession, setActiveQuizSession] = useState(null);
@@ -251,7 +251,7 @@ const ArchiveClass = () => {
             // Since our goal is for this group, let's fetch all attempts for the group's sessions
             const sessionIds = sessions.map(s => s.id);
             let attemptsData = [];
-            
+
             if (sessionIds.length > 0) {
                 const { data: aData, error: aError } = await supabase
                     .from('quiz_attempts')
@@ -268,7 +268,7 @@ const ArchiveClass = () => {
                     .select('*');
                 if (aData) attemptsData = aData;
             }
-            
+
             const qData = {};
             const qAttempts = {};
 
@@ -290,7 +290,7 @@ const ArchiveClass = () => {
 
             setQuizDataMap(qData);
             setQuizAttemptMap(qAttempts);
-        } catch(error) {
+        } catch (error) {
             console.error('Error fetching quizzes:', error);
         }
     }, [groupId, sessions]);
@@ -332,18 +332,18 @@ const ArchiveClass = () => {
     const handleTakeQuiz = async (session) => {
         const lang = (i18n.language || 'en').split('-')[0];
         const quizKey = `${session.id}_${lang}`;
-        
+
         setActiveQuizSession(session);
         setAttemptError(null);
         let quiz = quizDataMap[quizKey];
-        
+
         if (!quiz) {
             setGeneratingQuizId(session.id);
             try {
                 // Generate quiz
                 const notes = session.description || session.title;
                 const generated = await aiService.generateQuiz(
-                    notes, 
+                    notes,
                     lang
                 );
                 const first3 = Array.isArray(generated) ? generated.slice(0, 3) : [];
@@ -357,7 +357,7 @@ const ArchiveClass = () => {
                     created_by: userData.id,
                     language: lang
                 });
-                setQuizDataMap(prev => ({...prev, [quizKey]: quiz}));
+                setQuizDataMap(prev => ({ ...prev, [quizKey]: quiz }));
             } catch (err) {
                 console.error("Quiz gen error", err);
                 setAttemptError("Failed to generate quiz. " + err.message);
@@ -370,7 +370,7 @@ const ArchiveClass = () => {
         setCurrentQuiz(quiz);
         setQuizAnswers({});
         setQuizSubmitted(false);
-        
+
         // Check if I already attempted this specific session (any language)
         const attempts = quizAttemptMap[session.id] || [];
         const myAttempt = attempts.find(a => a.userId === userData.id);
@@ -379,7 +379,7 @@ const ArchiveClass = () => {
             setQuizScore(myAttempt.score || 0);
             setQuizSubmitted(true);
         }
-        
+
         setShowQuizModal(true);
     };
 
@@ -394,7 +394,7 @@ const ArchiveClass = () => {
         currentQuiz.forEach((q, idx) => {
             if (quizAnswers[idx] === q.correctAnswer) score++;
         });
-        
+
         setQuizScore(score);
         setQuizSubmitted(true);
 
@@ -433,7 +433,7 @@ const ArchiveClass = () => {
             });
         } catch (err) {
             console.error("Attempt save error:", err);
-            
+
             // Check specifically for the duplicate key constraint violation (code 23505)
             if (err.code === '23505') {
                 setAttemptError("You have already submitted a score for this session. Switching to your results.");
@@ -450,7 +450,7 @@ const ArchiveClass = () => {
 
             const errorMessage = err.message || "Unknown database error";
             setAttemptError(`Failed to save score: ${errorMessage}`);
-            setQuizSubmitted(false); 
+            setQuizSubmitted(false);
         }
     };
 
@@ -533,8 +533,8 @@ const ArchiveClass = () => {
                                                     disabled={generatingQuizId === session.id}
                                                     className="flex-1 py-2 bg-gradient-to-r from-indigo-500 to-purple-600 text-white rounded-xl text-sm font-bold shadow-lg hover:shadow-indigo-500/30 transition-all active:scale-95 disabled:opacity-50 flex items-center justify-center gap-2"
                                                 >
-                                                    {generatingQuizId === session.id ? t('quiz.generating') 
-                                                    : (quizAttemptMap[session.id]?.some(a => a.userId === userData.id) ? `📝 ${t('quiz.viewResults')}` : `✨ ${t('quiz.takeAIQuiz')}`)}
+                                                    {generatingQuizId === session.id ? t('quiz.generating')
+                                                        : (quizAttemptMap[session.id]?.some(a => a.userId === userData.id) ? `📝 ${t('quiz.viewResults')}` : `✨ ${t('quiz.takeAIQuiz')}`)}
                                                 </button>
                                             ) : (
                                                 <button
@@ -545,8 +545,8 @@ const ArchiveClass = () => {
                                                     {generatingQuizId === session.id ? t('quiz.generating') : `✨ ${t('quiz.prepQuiz')}`}
                                                 </button>
                                             )}
-                                            
-                                            <button 
+
+                                            <button
                                                 onClick={() => handleShowLeaderboard(session)}
                                                 className="px-4 py-2 bg-amber-100 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-300 hover:bg-amber-200 dark:hover:bg-amber-900/50 rounded-xl font-bold shadow-sm transition-all active:scale-95 group/leader"
                                                 title={t('quiz.viewTopScores')}
@@ -827,9 +827,9 @@ const ArchiveClass = () => {
                                             const isSelected = quizAnswers[qIndex] === oIndex;
                                             const isCorrect = q.correctAnswer === oIndex;
                                             const showCorrectness = quizSubmitted;
-                                            
+
                                             let btnClass = "w-full text-left p-4 rounded-xl border-2 transition-all font-medium text-sm ";
-                                            
+
                                             if (showCorrectness) {
                                                 if (isCorrect) btnClass += "border-green-500 bg-green-50 dark:bg-green-900/20 text-green-800 dark:text-green-200";
                                                 else if (isSelected) btnClass += "border-red-500 bg-red-50 dark:bg-red-900/20 text-red-800 dark:text-red-200";
@@ -840,7 +840,7 @@ const ArchiveClass = () => {
                                             }
 
                                             return (
-                                                <button 
+                                                <button
                                                     key={oIndex}
                                                     disabled={quizSubmitted}
                                                     onClick={() => handleQuizOptionSelect(qIndex, oIndex)}
@@ -925,7 +925,7 @@ const ArchiveClass = () => {
                                     <div className="space-y-4">
                                         {currentQuiz.map((q, idx) => (
                                             <div key={idx} className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-gray-100 dark:border-slate-800 text-sm">
-                                                <p className="font-semibold text-gray-800 dark:text-slate-200 mb-2">Q{idx+1}: {q.question}</p>
+                                                <p className="font-semibold text-gray-800 dark:text-slate-200 mb-2">Q{idx + 1}: {q.question}</p>
                                                 <p className="text-green-600 dark:text-green-400 font-medium">✅ {q.options[q.correctAnswer]}</p>
                                             </div>
                                         ))}

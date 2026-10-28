@@ -1,16 +1,6 @@
-import Groq from "groq-sdk";
-import { AssemblyAI } from 'assemblyai';
 import i18n from './i18n';
-
-// Initialize Groq client
-const groq = new Groq({
-    apiKey: import.meta.env.VITE_GROQ_API_KEY,
-    dangerouslyAllowBrowser: true
-});
-
-const aai = new AssemblyAI({
-    apiKey: import.meta.env.VITE_ASSEMBLYAI_API_KEY
-});
+import { callGroq } from '../lib/groqClient.js';
+import { getAssemblyToken } from '../lib/assemblyToken.js';
 
 // Language configurations for AI services
 const LANGUAGE_CONFIGS = {
@@ -48,8 +38,17 @@ const LANGUAGE_CONFIGS = {
 
 // Get current language configuration
 function getCurrentLanguageConfig(targetLang = null) {
-    const currentLang = (targetLang || i18n.language || 'en').split('-')[0];
-    return LANGUAGE_CONFIGS[currentLang] || LANGUAGE_CONFIGS.en;
+    // Robustly handle cases where targetLang might be an options object or null
+    let langCode = 'en';
+
+    if (typeof targetLang === 'string' && targetLang.length > 0) {
+        langCode = targetLang;
+    } else if (i18n && i18n.language) {
+        langCode = i18n.language;
+    }
+
+    const baseCode = langCode.split('-')[0];
+    return LANGUAGE_CONFIGS[baseCode] || LANGUAGE_CONFIGS.en;
 }
 
 export const multilingualAIService = {
@@ -64,28 +63,27 @@ export const multilingualAIService = {
     // 1. Generate Summaries in multiple languages
     generateSummary: async (text, targetLanguage = null) => {
         if (!text) return "No content to summarize.";
-        
+
         const config = getCurrentLanguageConfig(targetLanguage);
-        
+
         try {
-            const completion = await groq.chat.completions.create({
+            const payload = {
                 messages: [
                     {
                         role: "system",
-                        content: `${config.systemPrompt} 
-                        ${config.summaryPrompt}
-                        IMPORTANT: You MUST write the summary in ${config.name} ONLY.`
+                        content: `${config.systemPrompt} \n${config.summaryPrompt}\nIMPORTANT: You MUST write the summary in ${config.name} ONLY.`
                     },
                     {
                         role: "user",
                         content: `Summarize this text in ${config.name}: ${text}`
                     }
                 ],
-                model: "llama-3.3-70b-versatile",
+                model: "openai/gpt-oss-120b",
                 temperature: 0.5,
                 max_tokens: 500,
-            });
-            return completion.choices[0]?.message?.content || "Could not generate summary.";
+            };
+            const response = await callGroq(payload);
+            return response.choices?.[0]?.message?.content || "Could not generate summary.";
         } catch (error) {
             console.error("AI Error:", error);
             return "Error generating summary. Please check your API key.";
@@ -95,43 +93,28 @@ export const multilingualAIService = {
     // 2. Generate Quiz in multiple languages
     generateQuiz: async (text, targetLanguage = null) => {
         const config = getCurrentLanguageConfig(targetLanguage);
-        
+
         try {
-            const completion = await groq.chat.completions.create({
+            const payload = {
                 messages: [
                     {
                         role: "system",
-                        content: `${config.systemPrompt} 
-                        ${config.quizPrompt}
-                        IMPORTANT: You MUST generate EXACTLY 3 questions.
-                        IMPORTANT: You MUST generate the questions, options, and explanations in ${config.name} ONLY.
-                        Return ONLY a valid JSON object with this exact structure:
-                        {
-                          "quiz": [
-                            {
-                              "question": "Question text here in ${config.name}?",
-                              "options": ["Option A in ${config.name}", "Option B in ${config.name}", "Option C in ${config.name}", "Option D in ${config.name}"],
-                              "correctAnswer": 0
-                            }
-                          ]
-                        }
-                        Where correctAnswer is the index (0-3) of the correct option.`
+                        content: `${config.systemPrompt} \n${config.quizPrompt}\nIMPORTANT: You MUST generate EXACTLY 3 questions.\nIMPORTANT: You MUST generate the questions, options, and explanations in ${config.name} ONLY.\nReturn ONLY a valid JSON object with this exact structure:\n{\n  "quiz": [\n    {\n      "question": "Question text here in ${config.name}?",\n      "options": ["Option A in ${config.name}", "Option B in ${config.name}", "Option C in ${config.name}", "Option D in ${config.name}"],\n      "correctAnswer": 0\n    }\n  ]\n}\nWhere correctAnswer is the index (0-3) of the correct option.`
                     },
                     {
                         role: "user",
                         content: `Generate exactly 3 multiple-choice questions in ${config.name} based on this text:\n\n${text}`
                     }
                 ],
-                model: "llama-3.3-70b-versatile",
-                temperature: 0.2, // Lower temperature for more consistent language adherence
+                model: "openai/gpt-oss-120b",
+                temperature: 0.2,
                 response_format: { type: "json_object" }
-            });
-
-            const content = completion.choices[0]?.message?.content;
+            };
+            const response = await callGroq(payload);
+            const content = response.choices?.[0]?.message?.content;
             try {
                 const parsed = JSON.parse(content);
                 const quizArray = Array.isArray(parsed) ? parsed : (parsed.quiz || parsed.questions || []);
-
                 return quizArray.map(q => ({
                     question: q.question || q.q,
                     options: q.options || [],
@@ -149,26 +132,25 @@ export const multilingualAIService = {
     // 3. AI Tutor Chat Response in multiple languages
     getTutorResponse: async (context, userQuestion, targetLanguage = null) => {
         const config = getCurrentLanguageConfig(targetLanguage);
-        
+
         try {
-            const completion = await groq.chat.completions.create({
+            const payload = {
                 messages: [
                     {
                         role: "system",
-                        content: `${config.tutorPrompt} 
-                        Context of discussion: ${context}. 
-                        Answer the student's doubt simply and encouragingly. Be brief. ${config.groqPrompt}`
+                        content: `${config.tutorPrompt} \nContext of discussion: ${context}. \nAnswer the student's doubt simply and encouragingly. Be brief. ${config.groqPrompt}`
                     },
                     {
                         role: "user",
                         content: userQuestion
                     }
                 ],
-                model: "llama-3.3-70b-versatile",
+                model: "openai/gpt-oss-120b",
                 temperature: 0.7,
                 max_tokens: 200,
-            });
-            return completion.choices[0]?.message?.content;
+            };
+            const response = await callGroq(payload);
+            return response.choices?.[0]?.message?.content;
         } catch (error) {
             console.error("AI Error:", error);
             return "I'm having trouble connecting to my brain right now.";
@@ -178,17 +160,31 @@ export const multilingualAIService = {
     // 4. Transcribe Audio with language detection
     transcribeAudio: async (audioUrl, targetLanguage = null) => {
         if (!audioUrl) return "";
-        
+
         const config = getCurrentLanguageConfig(targetLanguage);
-        
+
         try {
-            const transcript = await aai.transcripts.transcribe({
-                audio_url: audioUrl,
-                language_code: config.assemblyCode,
-                punctuate: true,
-                format_text: true
+            const token = await getAssemblyToken();
+            const resp = await fetch('https://api.assemblyai.com/v2/transcript', {
+                method: 'POST',
+                headers: {
+                    'Authorization': token,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    audio_url: audioUrl,
+                    language_code: config.assemblyCode,
+                    punctuate: true,
+                    format_text: true
+                })
             });
-            return transcript.text || "No transcription available.";
+            if (!resp.ok) {
+                const err = await resp.text();
+                console.error('AssemblyAI error', resp.status, err);
+                return "Error transcribing audio.";
+            }
+            const data = await resp.json();
+            return data.text || "No transcription available.";
         } catch (error) {
             console.error("AssemblyAI Error:", error);
             return `Error transcribing audio: ${error.message}`;
@@ -198,32 +194,25 @@ export const multilingualAIService = {
     // 5. Generate Flashcards in multiple languages
     generateFlashcards: async (text, targetLanguage = null) => {
         const config = getCurrentLanguageConfig(targetLanguage);
-        
+
         try {
-            const completion = await groq.chat.completions.create({
+            const payload = {
                 messages: [
                     {
                         role: "system",
-                        content: `${config.systemPrompt} Generate flashcards from the provided text in ${config.name}.
-                        Return ONLY a valid JSON array of objects with this exact structure:
-                        [
-                          {
-                            "front": "Term or concept here",
-                            "back": "Definition or explanation here"
-                          }
-                        ]`
+                        content: `${config.systemPrompt} Generate flashcards from the provided text in ${config.name}.\nReturn ONLY a valid JSON array of objects with this exact structure:\n[\n  {"front": "Term or concept here", "back": "Definition or explanation here"}\n]`
                     },
                     {
                         role: "user",
                         content: text
                     }
                 ],
-                model: "llama-3.3-70b-versatile",
+                model: "openai/gpt-oss-120b",
                 temperature: 0.3,
                 response_format: { type: "json_object" }
-            });
-
-            const content = completion.choices[0]?.message?.content;
+            };
+            const response = await callGroq(payload);
+            const content = response.choices?.[0]?.message?.content;
             try {
                 const parsed = JSON.parse(content);
                 return Array.isArray(parsed) ? parsed : (parsed.flashcards || []);
@@ -239,19 +228,13 @@ export const multilingualAIService = {
     // 6. Language-specific educational insights
     generateEducationalInsights: async (transcript, confusionLevel, targetLanguage = null) => {
         const config = getCurrentLanguageConfig(targetLanguage);
-        
+
         try {
-            const completion = await groq.chat.completions.create({
+            const payload = {
                 messages: [
                     {
                         role: "system",
-                        content: `${config.systemPrompt} Analyze the classroom transcript and provide teaching insights in ${config.name}.
-                        Consider the current confusion level: ${confusionLevel}/100.
-                        Provide suggestions for:
-                        1. Teaching pace adjustments
-                        2. Topics that need clarification
-                        3. Engagement strategies
-                        4. Quick comprehension checks`
+                        content: `${config.systemPrompt} Analyze the classroom transcript and provide teaching insights in ${config.name}.\nConsider the current confusion level: ${confusionLevel}/100.\nProvide suggestions for:\n1. Teaching pace adjustments\n2. Topics that need clarification\n3. Engagement strategies\n4. Quick comprehension checks`
                     },
                     {
                         role: "user",
@@ -261,11 +244,57 @@ export const multilingualAIService = {
                 model: "llama-3.3-70b-versatile",
                 temperature: 0.6,
                 max_tokens: 300,
-            });
-            return completion.choices[0]?.message?.content || "No insights available.";
+            };
+            const response = await callGroq(payload);
+            return response.choices?.[0]?.message?.content || "No insights available.";
         } catch (error) {
             console.error("AI Error:", error);
             return "Error generating insights.";
+        }
+    },
+
+    // 7. Translate transcripts to different languages for students
+    translateTranscript: async (transcriptText, sourceLanguage = 'en', targetLanguage = 'en') => {
+        if (!transcriptText || transcriptText.trim().length === 0) {
+            return "";
+        }
+
+        // If source and target are same, return original
+        if (sourceLanguage === targetLanguage) {
+            return transcriptText;
+        }
+
+        // If translating to English, assume original is English (return as is)
+        if (targetLanguage === 'en' && sourceLanguage === 'en') {
+            return transcriptText;
+        }
+
+        const targetConfig = getCurrentLanguageConfig(targetLanguage);
+
+        try {
+            console.log(`[Translation] Translating from ${sourceLanguage} to ${targetLanguage}...`);
+
+            const payload = {
+                messages: [
+                    {
+                        role: "system",
+                        content: `You are a professional translator. Translate the following educational transcript to ${targetConfig.name}.\n${targetConfig.groqPrompt}\nKeep the meaning clear and educational. Maintain any formatting.\nIMPORTANT: Respond ONLY with the translated text, nothing else.`
+                    },
+                    {
+                        role: "user",
+                        content: `Translate this transcript to ${targetConfig.name}:\n\n${transcriptText}`
+                    }
+                ],
+                model: "openai/gpt-oss-120b",
+                temperature: 0.3,
+                max_tokens: Math.ceil(transcriptText.length * 1.2)
+            };
+            const response = await callGroq(payload);
+            const translatedText = response.choices?.[0]?.message?.content || transcriptText;
+            return translatedText;
+        } catch (error) {
+            console.error("[Translation] Error translating transcript:", error);
+            return transcriptText; // Fallback to original
         }
     }
 };
