@@ -45,7 +45,7 @@ function resampleTo16k(float32Input, sourceSampleRate) {
  */
 export async function startLiveTranscription(apiKey, { onStatus, onPartial, onFinal }) {
   if (!apiKey || apiKey === 'your_assemblyai_api_key_here') {
-    const msg = 'AssemblyAI API key not set. Add VITE_ASSEMBLYAI_API_KEY to .env';
+    const msg = 'AssemblyAI token unavailable. Ensure the assemblyai/token Edge Function is deployed.';
     onStatus?.('Error');
     throw new Error(msg);
   }

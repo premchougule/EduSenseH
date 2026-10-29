@@ -10,16 +10,12 @@ import { supabase } from "../lib/supabase";
 import { useTranslation } from 'react-i18next';
 
 import { aiService } from "../lib/ai";
-// import {
-//   generateArtifact,
-//   generatePersonalCapsule,
-//   getLiveSignals,
-//   getSttToken,
-//   moderateContent,
-// } from "../lib/aiWorkflows";
+// import LanguageSwitcher from "../components/LanguageSwitcher";
+import { multilingualAIService } from "../lib/multilingualAI";
+
 
 import { startLiveTranscription } from "../lib/liveTranscription";
-import { startMultilingualLiveTranscription, getSupportedTranscriptionLanguages } from "../lib/multilingualLiveTranscription";
+import { startMultilingualLiveTranscription } from "../lib/multilingualLiveTranscription";
 
 import {
   startAudioRecording,
@@ -54,9 +50,18 @@ function LiveClass() {
   const [transcriptionStatus, setTranscriptionStatus] = useState("Idle");
 
   // Multilingual transcription state
-  const [transcriptionLanguage, setTranscriptionLanguage] = useState("en");
+  const [transcriptionLanguage] = useState("en"); // Teacher always records in English
   const [detectedLanguage, setDetectedLanguage] = useState("English");
-  const [supportedLanguages, setSupportedLanguages] = useState([]);
+  const [supportedLanguages] = useState([
+    { code: "en", name: "🇮🇳 English" },
+    { code: "hi", name: "🇮🇳 हिंदी" },
+    { code: "mr", name: "🇮🇳 मराठी" }
+  ]);
+
+  // Student-side display language (for viewing transcript in different languages)
+  const [displayLanguage, setDisplayLanguage] = useState("en");
+  const [displayedTranscript, setDisplayedTranscript] = useState("");
+  const [isTranslating, setIsTranslating] = useState(false);
 
   // Intelligence State
 
@@ -78,9 +83,6 @@ function LiveClass() {
     chat_messages: 0,
   });
   const [adaptiveQuiz, setAdaptiveQuiz] = useState(null);
-  const [quizAnswers, setQuizAnswers] = useState({});
-  const [personalCapsule, setPersonalCapsule] = useState(null);
-  const [capsuleLoading, setCapsuleLoading] = useState(false);
 
   // Poll & Intel State
 
@@ -164,6 +166,8 @@ function LiveClass() {
   const transcriptDbFlushTimerRef = useRef(null);
 
   const isRecordingRef = useRef(false); // Track recording state for restarts
+
+  const languageTransitionRef = useRef(false); // Track language changes to suppress "Disconnected"
 
   const [isHost, setIsHost] = useState(false);
 
@@ -263,52 +267,6 @@ function LiveClass() {
       clearTimeout(transcriptDbFlushTimerRef.current);
     }
     transcriptDbFlushTimerRef.current = setTimeout(flushTranscriptBuffer, 1200);
-  };
-
-  const requestAdaptiveQuiz = async () => {
-    if (!isHostRef.current || !transcript.trim()) return;
-    try {
-      const data = await generateArtifact({
-        group_id: id,
-        session_id: currentLiveSessionIdRef.current,
-        role: "teacher",
-        transcript_delta: transcript.slice(-6000),
-        artifact_type: "quiz_generation",
-        student_context: {
-          poll_responses: pollResponses,
-          confusion_level: confusionLevel,
-        },
-      });
-      const quiz = Array.isArray(data?.content) ? data.content : [];
-      setAdaptiveQuiz(quiz);
-      sendBroadcast("adaptive_quiz", { quiz });
-    } catch (err) {
-      console.error("[LiveClass] Adaptive quiz generation failed:", err);
-    }
-  };
-
-  const requestPersonalCapsule = async () => {
-    if (!transcript.trim()) return;
-    setCapsuleLoading(true);
-    try {
-      const data = await generatePersonalCapsule({
-        group_id: id,
-        session_id: currentLiveSessionIdRef.current,
-        role: "student",
-        transcript_delta: transcript.slice(-7000),
-        student_context: {
-          confusion_level: confusionLevel,
-          topic: currentTopic,
-          doubts_count: doubts.length,
-          minutes_available: 5,
-        },
-      });
-      setPersonalCapsule(data?.capsule || null);
-    } catch (err) {
-      console.error("[LiveClass] Personal capsule failed:", err);
-    } finally {
-      setCapsuleLoading(false);
-    }
   };
 
   // Sync currentLiveSessionId to ref for use in broadcast listeners
@@ -555,12 +513,6 @@ function LiveClass() {
     };
   }, [id, role, currentLiveSessionId]);
 
-  // Initialize supported languages
-  useEffect(() => {
-    const languages = getSupportedTranscriptionLanguages();
-    setSupportedLanguages(languages);
-  }, []);
-
   // 0. Determine Host Status & Setup Sync Channel
 
   useEffect(() => {
@@ -612,6 +564,11 @@ function LiveClass() {
         if (data.id) processedChunkIdsRef.current.add(data.id);
         setTranscript((prev) => prev + (data.text || ""));
 
+        setTranscriptionStatus("Live");
+      })
+
+      .on("broadcast", { event: "transcript_partial" }, (payload) => {
+        setInterimTranscript(payload.payload?.text || "");
         setTranscriptionStatus("Live");
       })
 
@@ -689,7 +646,6 @@ function LiveClass() {
         const quiz = payload?.payload?.quiz;
         if (Array.isArray(quiz)) {
           setAdaptiveQuiz(quiz);
-          setQuizAnswers({});
         }
       })
 
@@ -834,26 +790,44 @@ function LiveClass() {
 
     let controller = null;
     let cancelled = false;
+    let startupTimeout = null;
 
+    // Mark that we're transitioning languages if needed
     const bootTranscription = async () => {
-      let apiKey = null;
+      // Add delay to allow previous WebSocket to fully close
+      await new Promise(resolve => {
+        startupTimeout = setTimeout(resolve, 300);
+      });
+
+      if (cancelled) return;
+
+      let apiKey;
       try {
-        apiKey = await getSttToken({ group_id: id, expires_in: 900 });
-      } catch (tokenErr) {
-        console.warn("[LiveClass] Failed to mint STT token, using fallback key:", tokenErr);
+        const { getAssemblyToken } = await import('../lib/assemblyToken.js');
+        apiKey = await getAssemblyToken();
+      } catch (err) {
+        console.error('[Teacher] Failed to fetch AssemblyAI token:', err);
+        setTranscriptionStatus('Error');
+        return;
       }
 
-      if (!apiKey) {
-        apiKey = import.meta.env.VITE_ASSEMBLYAI_API_KEY;
-      }
       if (!apiKey) {
         setTranscriptionStatus("Error");
         return;
       }
 
+      console.log(`[Teacher] Starting transcription with language: ${transcriptionLanguage}`);
+
       startMultilingualLiveTranscription(apiKey, {
         language: transcriptionLanguage,
         onStatus: (status) => {
+          // Suppress "Disconnected" status during language transitions
+          if (status === "Disconnected" && languageTransitionRef.current) {
+            console.log("[Teacher] Suppressing Disconnected status during language transition");
+            languageTransitionRef.current = false;
+            return;
+          }
+
           transcriptionStatusRef.current = status;
           setTranscriptionStatus(status);
           console.log("[Teacher] Broadcasting status:", status);
@@ -864,8 +838,17 @@ function LiveClass() {
           sendBroadcast("transcript_partial", { text });
         },
         onFinal: (text) => {
+          // Generate a consistent ID for deduplication
+          const chunkId = crypto.randomUUID();
+
           setTranscript((prev) => prev + " " + text);
           setInterimTranscript("");
+
+          // Persistence to DB
+          queueTranscriptChunk(chunkId, text);
+
+          // Broadcast for instant sync to students
+          sendBroadcast("transcript_chunk", { id: chunkId, text: " " + text });
           sendBroadcast("transcript_final", { text });
         },
         onLanguageDetected: (language) => {
@@ -873,22 +856,25 @@ function LiveClass() {
           sendBroadcast("transcription_language", { language });
         }
       })
-      .then((c) => {
-        if (cancelled) return;
-        controller = c;
-        recognitionRef.current = {
-          stop: () => {
-            isRecordingRef.current = false;
-            controller?.stop();
-          },
-        };
-      })
-      .catch((err) => {
-        console.error("[LiveClass] Transcription start failed:", err);
-        setTranscriptionStatus("Error");
-        setIsRecording(false);
-        isRecordingRef.current = false;
-      });
+        .then((c) => {
+          if (cancelled) {
+            c?.stop();
+            return;
+          }
+          controller = c;
+          recognitionRef.current = {
+            stop: () => {
+              isRecordingRef.current = false;
+              controller?.stop();
+            },
+          };
+        })
+        .catch((err) => {
+          console.error("[LiveClass] Transcription start failed:", err);
+          setTranscriptionStatus("Error");
+          setIsRecording(false);
+          isRecordingRef.current = false;
+        });
     };
 
     bootTranscription();
@@ -896,78 +882,72 @@ function LiveClass() {
     return () => {
       cancelled = true;
       isRecordingRef.current = false;
+      languageTransitionRef.current = true; // Flag to suppress Disconnected status
 
-      controller?.stop();
+      if (startupTimeout) clearTimeout(startupTimeout);
+
+      if (controller) {
+        console.log("[Teacher] Stopping transcription for language change");
+        controller.stop();
+        controller = null;
+      }
     };
   }, [id, isHost, isRecording]);
+
+  // Transcript translation for student display
+  useEffect(() => {
+    // Only translate for students, not teachers
+    if (role === "teacher") {
+      setDisplayedTranscript(transcript);
+      return;
+    }
+
+    // If no transcript, clear displayed
+    if (!transcript || transcript.trim().length === 0) {
+      setDisplayedTranscript("");
+      return;
+    }
+
+    // If display language is English (original), show original transcript
+    if (displayLanguage === "en") {
+      setDisplayedTranscript(transcript);
+      return;
+    }
+
+    // For other languages, translate in real-time
+    const translateTranscriptAsync = async () => {
+      setIsTranslating(true);
+      try {
+        const translated = await multilingualAIService.translateTranscript(
+          transcript,
+          "en", // Source language (teacher recorded in English)
+          displayLanguage // Target language
+        );
+        setDisplayedTranscript(translated);
+      } catch (error) {
+        console.error("[LiveClass] Translation error:", error);
+        setDisplayedTranscript(transcript); // Fallback to original
+      } finally {
+        setIsTranslating(false);
+      }
+    };
+
+    // Add debounce to avoid translating too frequently
+    const debounceTimer = setTimeout(() => {
+      translateTranscriptAsync();
+    }, 500);
+
+    return () => clearTimeout(debounceTimer);
+  }, [transcript, displayLanguage, role]);
 
   // 2. AI Analysis Function
 
   const analyzeTranscript = async (textSegment) => {
     if (!textSegment?.trim()) return;
-    console.log("Analyzing transcript segment with live-signals workflow...");
-    try {
-      const signals = await getLiveSignals({
-        group_id: id,
-        session_id: currentLiveSessionIdRef.current,
-        role: isHostRef.current ? "teacher" : "student",
-        transcript_delta: textSegment,
-        student_context: {
-          current_topic: currentTopic,
-          confusion_level: confusionLevel,
-          poll_responses: pollResponses.length,
-          doubts: doubts.length,
-        },
-      });
-
-      const topic = signals?.topic || currentTopic;
-      const cues = Array.isArray(signals?.teaching_cues)
-        ? signals.teaching_cues.filter(Boolean).slice(0, 3)
-        : [];
-      const rescue = Array.isArray(signals?.rescue_actions)
-        ? signals.rescue_actions.filter(Boolean).slice(0, 3)
-        : [];
-      const insight = signals?.insight || aiInsight;
-      const nextConfusion = Number.isFinite(signals?.confusion_score)
-        ? signals.confusion_score
-        : confusionLevel;
-
-      setCurrentTopic(topic);
-      setTeachingCues(cues);
-      setRescueActions(rescue);
-      setAiInsight(insight);
-      setConfusionLevel(Math.max(0, Math.min(100, nextConfusion)));
-      setParticipationStats((prev) => ({
-        answered_polls:
-          prev.answered_polls + Number(signals?.participation_delta?.answered_polls || 0),
-        raised_doubts:
-          prev.raised_doubts + Number(signals?.participation_delta?.raised_doubts || 0),
-        chat_messages:
-          prev.chat_messages + Number(signals?.participation_delta?.chat_messages || 0),
-      }));
-      setConceptDriftAlert(
-        signals?.concept_drift
-          ? {
-              detected: true,
-              reason: signals?.drift_reason || "Concept drift detected by AI.",
-            }
-          : null,
-      );
-
-      sendBroadcast("ai_update", {
-        cues,
-        topic,
-        insight,
-        confusionLevel: nextConfusion,
-        topicClarity,
-        rescueActions: rescue,
-        conceptDrift: signals?.concept_drift || false,
-        conceptDriftReason: signals?.drift_reason || "",
-      });
-    } catch (err) {
-      console.error("[LiveClass] live-signals analysis failed:", err);
-    }
+    // AI Analysis logic disabled/removed as per user request
+    return;
   };
+
 
   // Meeting Handlers
 
@@ -1407,17 +1387,8 @@ function LiveClass() {
     console.log("[Doubt] Raising doubt:", doubtToAdd.text);
 
     try {
-      const moderation = await moderateContent({
-        group_id: id,
-        session_id: currentLiveSessionId,
-        channel: "doubt",
-        text: doubtToAdd.text,
-      });
-      if (!moderation?.approved) {
-        alert("This doubt message was blocked by safety filters.");
-        return;
-      }
-      doubtToAdd.text = moderation?.sanitized_text || doubtToAdd.text;
+      // Content moderation disabled as per user request
+
 
       // Optimistic update
 
@@ -1733,7 +1704,7 @@ function LiveClass() {
 
                         <button
                           onClick={() => handleJoinSessionClick(session)}
-                        className="ml-4 px-6 py-3 bg-gradient-to-r from-green-500 to-green-600 text-white font-bold rounded-xl hover:shadow-lg hover:-translate-y-0.5 transition-all flex items-center gap-2"
+                          className="ml-4 px-6 py-3 bg-gradient-to-r from-green-500 to-green-600 text-white font-bold rounded-xl hover:shadow-lg hover:-translate-y-0.5 transition-all flex items-center gap-2"
                         >
                           <svg
                             className="w-5 h-5"
@@ -1999,11 +1970,11 @@ function LiveClass() {
                 </div>
 
                 <div>
-                <h3 className="text-gray-900 dark:text-slate-50 font-bold text-xl">
+                  <h3 className="text-gray-900 dark:text-slate-50 font-bold text-xl">
                     Join Class
                   </h3>
 
-                <p className="text-sm text-gray-500 dark:text-slate-300">
+                  <p className="text-sm text-gray-500 dark:text-slate-300">
                     {selectedSession.topic}
                   </p>
                 </div>
@@ -2085,34 +2056,33 @@ function LiveClass() {
           </h2>
         </div>
 
-        <div className="flex items-center gap-3">
+        {/* <div className="flex items-center gap-3">
           <LanguageSwitcher />
-        </div>
+        </div> */}
 
         <div className="flex items-center gap-2 sm:gap-4 w-full sm:w-auto overflow-x-auto pb-1 sm:pb-0 no-scrollbar">
-          {/* Transcription Language Selector */}
-          {role === "teacher" && (
+          {/* Student: Transcript Display Language Selector */}
+          {role === "student" && (
             <div className="flex items-center gap-2">
-              <span className="text-xs text-gray-600 dark:text-gray-300">🎤 Speech:</span>
+              <span className="text-xs text-gray-600 dark:text-gray-300">📖 View in:</span>
               <select
-                value={transcriptionLanguage}
-                onChange={(e) => setTranscriptionLanguage(e.target.value)}
+                value={displayLanguage}
+                onChange={(e) => setDisplayLanguage(e.target.value)}
                 className="text-xs px-2 py-1 border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-slate-800 text-gray-800 dark:text-gray-200"
+                disabled={isTranslating}
               >
-                {supportedLanguages.map((lang) => (
-                  <option key={lang.code} value={lang.code}>
-                    {lang.name}
-                  </option>
-                ))}
+                <option value="en">🇮🇳 English</option>
+                <option value="hi">🇮🇳 हिंदी</option>
+                <option value="mr">🇮🇳 मराठी</option>
               </select>
-              {detectedLanguage && (
-                <span className="text-xs text-green-600 dark:text-green-400">
-                  ({detectedLanguage})
+              {isTranslating && (
+                <span className="text-xs text-blue-600 dark:text-blue-400">
+                  Translating...
                 </span>
               )}
             </div>
           )}
-          
+
           {role === "teacher" ? (
             <>
               {/* Audio Recording Status Indicator */}
@@ -2353,12 +2323,6 @@ function LiveClass() {
                           className="w-full py-3.5 bg-green-500 hover:bg-green-600 text-white font-bold rounded-xl shadow-lg shadow-green-200 transition-all flex items-center justify-center gap-2"
                         >
                           <span>🚀</span> Launch Quick Poll
-                        </button>
-                        <button
-                          onClick={requestAdaptiveQuiz}
-                          className="w-full py-3.5 bg-violet-600 hover:bg-violet-700 text-white font-bold rounded-xl shadow-lg shadow-violet-200 transition-all flex items-center justify-center gap-2"
-                        >
-                          <span>🧠</span> Adaptive Poll-to-Quiz
                         </button>
                       </div>
                     ) : (
@@ -2608,8 +2572,8 @@ function LiveClass() {
                     : "Waiting for teacher…"}
                 </p>
                 <div className="p-4 max-h-55 overflow-y-auto text-sm text-gray-700 leading-relaxed bg-gray-50/50 rounded-xl border border-gray-100 custom-scrollbar">
-                  {transcript ? (
-                    <span className="whitespace-pre-wrap">{transcript}</span>
+                  {displayedTranscript ? (
+                    <span className="whitespace-pre-wrap">{displayedTranscript}</span>
                   ) : null}
                   {interimTranscript && (
                     <span className="opacity-70 italic">
@@ -2617,7 +2581,7 @@ function LiveClass() {
                       {interimTranscript}
                     </span>
                   )}
-                  {!transcript && !interimTranscript && (
+                  {!displayedTranscript && !interimTranscript && (
                     <span className="text-gray-500 italic">
                       {transcriptionStatus === "Live"
                         ? "Teacher is speaking..."
@@ -2686,82 +2650,7 @@ function LiveClass() {
                   )}
                 </div>
               </div>
-              {Array.isArray(adaptiveQuiz) && adaptiveQuiz.length > 0 && (
-                <div className="bg-violet-50/70 rounded-2xl p-4 shadow-sm border border-violet-100 shrink-0">
-                  <h4 className="m-0 text-violet-900 text-sm font-bold uppercase tracking-wider mb-3">
-                    Adaptive Quiz from Live Poll
-                  </h4>
-                  <div className="space-y-3 max-h-52 overflow-y-auto pr-1">
-                    {adaptiveQuiz.slice(0, 2).map((q, qIndex) => (
-                      <div key={qIndex} className="bg-white border border-violet-100 rounded-xl p-3">
-                        <p className="m-0 text-xs font-semibold text-gray-900 mb-2">
-                          {qIndex + 1}. {q.question}
-                        </p>
-                        <div className="grid grid-cols-1 gap-2">
-                          {(q.options || []).map((opt, oIndex) => {
-                            const selected = quizAnswers[qIndex] === oIndex;
-                            return (
-                              <button
-                                key={oIndex}
-                                type="button"
-                                onClick={() =>
-                                  setQuizAnswers((prev) => ({
-                                    ...prev,
-                                    [qIndex]: oIndex,
-                                  }))
-                                }
-                                className={`text-left text-xs px-3 py-2 rounded-lg border transition ${selected
-                                  ? "bg-violet-600 text-white border-violet-600"
-                                  : "bg-violet-50 text-violet-900 border-violet-100 hover:bg-violet-100"
-                                  }`}
-                              >
-                                {String.fromCharCode(65 + oIndex)}. {opt}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-              <div className="bg-emerald-50/70 rounded-2xl p-4 shadow-sm border border-emerald-100 shrink-0">
-                <div className="flex items-center justify-between mb-3">
-                  <h4 className="m-0 text-emerald-900 text-sm font-bold uppercase tracking-wider">
-                    Personal Catch-Up Capsule
-                  </h4>
-                  <button
-                    type="button"
-                    onClick={requestPersonalCapsule}
-                    disabled={capsuleLoading || !transcript.trim()}
-                    className="px-3 py-1.5 rounded-lg text-xs font-bold bg-emerald-600 text-white disabled:opacity-50"
-                  >
-                    {capsuleLoading ? "Generating..." : "Generate"}
-                  </button>
-                </div>
-                {personalCapsule ? (
-                  <div className="text-xs text-emerald-950 bg-white border border-emerald-100 rounded-xl p-3">
-                    <p className="m-0 font-semibold mb-2">
-                      {personalCapsule.title || "Your capsule"}
-                    </p>
-                    {Array.isArray(personalCapsule.five_minute_plan) ? (
-                      <ul className="m-0 pl-4 space-y-1">
-                        {personalCapsule.five_minute_plan.map((step, idx) => (
-                          <li key={idx}>{step}</li>
-                        ))}
-                      </ul>
-                    ) : (
-                      <p className="m-0 whitespace-pre-wrap">
-                        {JSON.stringify(personalCapsule, null, 2)}
-                      </p>
-                    )}
-                  </div>
-                ) : (
-                  <p className="m-0 text-xs text-emerald-800/80">
-                    Generate a focused 5-minute recovery plan tailored to this live class.
-                  </p>
-                )}
-              </div>
+
               <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 flex-1 flex flex-col min-h-70">
                 <div className="flex items-center justify-between mb-4">
                   <h4 className="m-0 text-gray-800 text-sm font-bold uppercase tracking-wider">

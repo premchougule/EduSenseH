@@ -44,9 +44,9 @@ export const extractTextFromPDFArrayBuffer = async (arrayBuffer) => {
       try {
         const page = await pdf.getPage(pageNum);
         const content = await page.getTextContent();
-        const strings = content.items.map((item) => item.str || item.toString()).filter(str => str.trim());
+        const strings = content.items.map((item) => (typeof item.str === 'string' ? item.str : '')).filter(str => str.trim());
         const pageText = strings.join(' ');
-        
+
         if (pageText.trim()) {
           fullText += pageText + '\n\n';
           extractedPages++;
@@ -107,7 +107,7 @@ export const extractTextFromFile = async (fileOrBlob) => {
     // If we have a blob, determine file type and extract accordingly
     if (blob) {
       const extension = fileName.toLowerCase().split('.').pop() || '';
-      
+
       // PDF files
       if (fileType === 'application/pdf' || extension === 'pdf') {
         try {
@@ -199,7 +199,7 @@ export const extractTextFromFile = async (fileOrBlob) => {
 const fallbackTextExtraction = async (blob, fileName, fileType) => {
   try {
     const text = await blob.text();
-    
+
     // Check if the text looks like binary data (too many non-printable characters)
     const printableChars = text.replace(/[\x00-\x1F\x7F-\x9F]/g, '').length;
     const totalChars = text.length;
