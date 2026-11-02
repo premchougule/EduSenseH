@@ -153,7 +153,7 @@ export default function Welcome() {
   }, []);
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-50 overflow-x-hidden transition-colors">
+    <div className="dark min-h-screen bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-50 overflow-x-hidden transition-colors">
       {/* Gradient orbs */}
       <div className="fixed inset-0 pointer-events-none overflow-hidden">
         <div className="absolute -top-40 -left-40 w-[600px] h-[600px] bg-sky-600/10 rounded-full blur-3xl" />
